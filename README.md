@@ -4,7 +4,7 @@ This project is inspired by the CME's [FedWatch Tool](https://www.cmegroup.com/a
 
 You can find the .xlsx model that detail the calculation named BoEwatch-calculation-examples.xlsx
 
-### Implied rate cut probability as of 24 March 2026
+### Implied rate hike probability as of 24 March 2026
 
 As of **24 March 2026**, the market-implied probabilities of Bank of England (BoE) rate hike at the April's Monetary Policy Committee (MPC) meetings are as follows:
 
