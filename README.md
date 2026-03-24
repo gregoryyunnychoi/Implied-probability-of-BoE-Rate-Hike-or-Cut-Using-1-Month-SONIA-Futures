@@ -12,3 +12,5 @@ As of **24 March 2026**, the market-implied probabilities of Bank of England (Bo
 - **66% probability** of 1 25bps rate hike when using the **May 2026** SONIA futures contract as the anchor.
 
 These probabilities suggest that the market expects **66% of 1 hike** in rate for April. The context here is Iran-US/Israel War 2026.
+
+<img width="752" height="451" alt="image" src="https://github.com/user-attachments/assets/cfba71da-9094-4a3f-aac1-cf51518c1cec" />
