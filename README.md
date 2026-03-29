@@ -6,7 +6,7 @@ You can find the .xlsx model that detail the calculation named BoEwatch-calculat
 
 ### Implied rate hike probability as of 24 March 2026
 
-As of **24 March 2026**, the market-implied probabilities of Bank of England (BoE) rate hike at the April's Monetary Policy Committee (MPC) meetings are as follows:
+As of **24 March 2026**, the market-implied probabilities of Bank of England (BoE) rate hike at the April's Monetary Policy Committee (MPC) meetings on 30th April 2026, are as follows:
 
 - **66% probability** of 1 25bps rate hike when using the **May 2026** SONIA futures contract as the anchor.
 
