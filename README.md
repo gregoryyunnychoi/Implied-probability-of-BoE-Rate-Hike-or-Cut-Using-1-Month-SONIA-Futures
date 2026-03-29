@@ -16,7 +16,7 @@ These probabilities suggest that the market expects **66% of 1 hike** in rate fo
 
 ## 1-Month SONIA Futures implied rate path
 
-We also provide the code used to reconstruct the chart of future implied rates, illustrating the extent to which the MPC’s potential rate hikes or cuts are currently priced in.
+We also provide the piece of code (under [text](<API_Sonia_future_price_data.py>)) used to reconstruct the chart of future implied rates, illustrating the extent to which the MPC’s potential rate hikes or cuts are currently priced in.
 
 Below is the one‑year forward implied rate as of 18 March 2026, a point at which the Iran–US/Israel conflict heightened market concerns about a renewed bout of supply‑driven inflation in the UK. At that time, markets were pricing in a wooping 4 rate hikes by the end of 2026. In my view, this reaction was significantly overdone at the time of writing, creating an opportunity to go long the December 3‑month SONIA future. 
 
