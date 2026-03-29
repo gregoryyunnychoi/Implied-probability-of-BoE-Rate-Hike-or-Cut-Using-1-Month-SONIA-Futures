@@ -1,0 +1,265 @@
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import matplotlib.gridspec as gridspec
+from datetime import datetime, timedelta
+from io import StringIO
+
+# ── Contract definitions ──────────────────────────────────────────────────────
+contracts = [
+    ("Apr", 7746460),
+    ("May", 7777128),
+    ("Jun", 7806499),
+    ("Jul", 7835276),
+    ("Aug", 7863257),
+    ("Sep", 7900731),
+    ("Oct", 7954144),
+    ("Nov", 7988522),
+    ("Dec", 8047514),
+    ("Jan", 8111076),
+    ("Feb", 8159430),
+    ("Mar", 8198864),
+]
+
+# ── Fetch latest BoE SONIA rate ───────────────────────────────────────────────
+today_str     = datetime.today().strftime("%d/%b/%Y")
+two_weeks_ago = (datetime.today() - timedelta(days=14)).strftime("%d/%b/%Y")
+
+sonia_url = "https://www.bankofengland.co.uk/boeapps/iadb/fromshowcolumns.asp"
+sonia_params = {
+    "csv.x":       "yes",
+    "Datefrom":    two_weeks_ago,
+    "Dateto":      today_str,
+    "SeriesCodes": "IUDSOIA",
+    "CSVF":        "TN",
+    "UsingCodes":  "Y",
+    "VPD":         "Y",
+    "VFD":         "N",
+}
+sonia_response = requests.get(sonia_url, params=sonia_params,
+                              headers={"User-Agent": "Mozilla/5.0"})
+sonia_response.raise_for_status()
+
+sonia_df = pd.read_csv(StringIO(sonia_response.text), skiprows=1, header=None)
+sonia_df.columns = ["date", "sonia_rate"]
+sonia_df["date"] = pd.to_datetime(sonia_df["date"], dayfirst=True)
+sonia_df["sonia_rate"] = pd.to_numeric(sonia_df["sonia_rate"], errors="coerce")
+sonia_df = sonia_df.dropna().sort_values("date").reset_index(drop=True)
+
+latest_sonia      = sonia_df["sonia_rate"].iloc[-1]
+latest_sonia_date = sonia_df["date"].iloc[-1].date()
+
+print(f"Latest SONIA: {latest_sonia:.4f}% on {latest_sonia_date}")
+
+# ── Fetch last price and 1-month-ago price for each futures contract ──────────
+target_month_ago = datetime.today() - timedelta(days=30)
+
+results = []
+for label, market_id in contracts:
+    url = (f"https://www.ice.com/marketdata/api/productguide/charting/data/historical"
+           f"?marketId={market_id}&historicalSpan=1")
+    r = requests.get(url, headers={
+        "User-Agent": "Mozilla/5.0",
+        "Accept":     "application/json",
+        "Referer":    "https://www.ice.com/"
+    }, timeout=30)
+    bars = r.json().get("bars", [])
+    if not bars:
+        continue
+
+    # Convert bars to dataframe for date lookup
+    # ICE returns dates as strings e.g. "Tue Dec 23 00:00:00 2025"
+    df_bars = pd.DataFrame(bars, columns=["ts", "price"])
+    df_bars["date"] = pd.to_datetime(df_bars["ts"], format="%a %b %d %H:%M:%S %Y")
+
+    # Latest bar
+    price_now = df_bars["price"].iloc[-1]
+
+    # Bar closest to 1 month ago (on or before target)
+    past = df_bars[df_bars["date"] <= target_month_ago]
+    price_month_ago = past["price"].iloc[-1] if not past.empty else df_bars["price"].iloc[0]
+
+    implied_now       = round(100 - price_now, 4)
+    implied_month_ago = round(100 - price_month_ago, 4)
+    diff              = implied_now - latest_sonia
+    prob              = diff / 0.25
+
+    results.append({
+        "label":             label,
+        "price":             price_now,
+        "implied":           implied_now,
+        "price_month_ago":   price_month_ago,
+        "implied_month_ago": implied_month_ago,
+        "diff":              diff,
+        "prob":              prob,
+    })
+
+print("\nDiagnostics:")
+for d in results:
+    print(f"  {d['label']}: implied={d['implied']:.4f}%  "
+          f"1m ago={d['implied_month_ago']:.4f}%  "
+          f"diff={d['diff']:+.4f}%  prob={d['prob']:+.3f}")
+
+labels          = [d["label"]             for d in results]
+prices          = [d["price"]             for d in results]
+implied         = [d["implied"]           for d in results]
+implied_m_ago   = [d["implied_month_ago"] for d in results]
+probs           = [d["prob"]              for d in results]
+
+# ── Metric summary ────────────────────────────────────────────────────────────
+peak_idx    = implied.index(max(implied))
+curve_range = round((max(implied) - min(implied)) * 100, 1)
+
+print(f"\n── Dashboard summary ───────────────────────────────")
+print(f"  Latest SONIA:      {latest_sonia:.4f}% ({latest_sonia_date})")
+print(f"  Near-term (Apr):   price {prices[0]:.3f}  implied {implied[0]:.3f}%")
+print(f"  Peak implied rate: {max(implied):.3f}% ({labels[peak_idx]} contract)")
+print(f"  Curve range:       {curve_range:.0f}bp "
+      f"({min(implied):.2f}% → {max(implied):.3f}%)")
+
+# ── Probability label helper ──────────────────────────────────────────────────
+def prob_label(prob):
+    abs_prob  = abs(prob)
+    direction = "cut" if prob < 0 else "hike"
+    if abs_prob < 0.04:
+        return "no chg", "#888888"
+    colour = "#1D9E75" if prob < 0 else "#D85A30"
+    if abs_prob <= 1.0:
+        return f"{direction}\n{abs_prob * 100:.0f}%", colour
+    full_moves = int(abs_prob)
+    remainder  = (abs_prob - full_moves) * 100
+    if remainder < 5:
+        return f"{full_moves}× {direction}", colour
+    return f"{full_moves}× {direction}\n+{remainder:.0f}%", colour
+
+# ── Plot ──────────────────────────────────────────────────────────────────────
+fig = plt.figure(figsize=(15, 9))
+fig.patch.set_facecolor("white")
+
+gs = gridspec.GridSpec(
+    2, 1,
+    height_ratios=[2, 1],
+    hspace=0.42,
+    left=0.06, right=0.94, top=0.91, bottom=0.08,
+)
+
+# ── Metric cards ──────────────────────────────────────────────────────────────
+metrics = [
+    ("Latest SONIA",       f"{latest_sonia:.4f}%",  f"{latest_sonia_date}",                       "#1D9E75"),
+    ("Near-term contract", f"Apr  {prices[0]:.3f}", f"implied {implied[0]:.3f}%",                 "#185FA5"),
+    ("Peak implied rate",  f"{max(implied):.3f}%",  f"{labels[peak_idx]} contract",               "#D85A30"),
+    ("Curve range",        f"{curve_range:.0f}bp",
+     f"Apr {min(implied):.2f}% → {labels[peak_idx]} {max(implied):.3f}%",                        "#444441"),
+]
+for i, (title, value, sub, colour) in enumerate(metrics):
+    x = 0.01 + i * 0.245
+    fig.text(x, 0.955, title, fontsize=8.5, color="#888780",
+             transform=fig.transFigure)
+    fig.text(x, 0.930, value, fontsize=13, fontweight="medium", color=colour,
+             transform=fig.transFigure, family="monospace")
+    fig.text(x, 0.910, sub, fontsize=8, color="#B4B2A9",
+             transform=fig.transFigure)
+
+# ── Top panel: futures curve ──────────────────────────────────────────────────
+ax1 = fig.add_subplot(gs[0])
+ax1.set_facecolor("white")
+
+ax1.plot(labels, prices, color="#185FA5", linewidth=2, marker="o",
+         markersize=6, markerfacecolor="white", markeredgewidth=1.5,
+         label="Price (today)", zorder=3)
+ax1.set_ylabel("Price", color="#185FA5", fontsize=11)
+ax1.tick_params(axis="y", labelcolor="#185FA5")
+ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f"))
+p_pad = (max(prices) - min(prices)) * 0.3
+ax1.set_ylim(min(prices) - p_pad, max(prices) + p_pad)
+
+ax2 = ax1.twinx()
+
+ax2.plot(labels, implied, color="#D85A30", linewidth=2, marker="o",
+         linestyle="--", markersize=6, markerfacecolor="white",
+         markeredgewidth=1.5, label="Implied rate — today", zorder=3)
+
+ax2.plot(labels, implied_m_ago, color="#1D9E75", linewidth=1.8, marker="o",
+         linestyle=":", markersize=5, markerfacecolor="white",
+         markeredgewidth=1.5,
+         label=f"Implied rate — 1 month ago (~{target_month_ago.strftime('%d %b')})",
+         zorder=2)
+
+ax2.set_ylabel("Implied rate (%)", color="#D85A30", fontsize=11)
+ax2.tick_params(axis="y", labelcolor="#D85A30")
+ax2.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.2f%%"))
+
+all_implied = implied + implied_m_ago
+r_pad = (max(all_implied) - min(all_implied)) * 0.3
+ax2.set_ylim(min(all_implied) - r_pad, max(all_implied) + r_pad)
+
+ax2.axhline(y=latest_sonia, color="#888780", linewidth=1.2, linestyle=":",
+            zorder=2,
+            label=f"Latest SONIA: {latest_sonia:.4f}% ({latest_sonia_date})")
+
+# Probability annotations on today's curve only
+for i, (imp, prob) in enumerate(zip(implied, probs)):
+    txt, colour = prob_label(prob)
+    ax2.annotate(
+        txt,
+        xy=(i, imp),
+        xytext=(0, 12),
+        textcoords="offset points",
+        ha="center",
+        fontsize=7.5,
+        color=colour,
+        fontweight="bold",
+        linespacing=1.3,
+    )
+
+ax1.set_title("ICE 1-month SONIA futures curve", fontsize=12,
+              fontweight="normal", pad=10)
+ax1.grid(axis="y", color="grey", alpha=0.12, linewidth=0.8)
+
+lines1, lbs1 = ax1.get_legend_handles_labels()
+lines2, lbs2 = ax2.get_legend_handles_labels()
+ax1.legend(lines1 + lines2, lbs1 + lbs2, fontsize=9,
+           framealpha=0.7, loc="upper right")
+
+# ── Bottom panel: probability bar chart ──────────────────────────────────────
+ax3 = fig.add_subplot(gs[1])
+ax3.set_facecolor("white")
+
+bar_colours = []
+for p in probs:
+    if abs(p) < 0.04:
+        bar_colours.append("#B4B2A9")
+    elif p < 0:
+        bar_colours.append("#1D9E75")
+    else:
+        bar_colours.append("#D85A30")
+
+x_pos = range(len(labels))
+bars  = ax3.bar(x_pos, probs, color=bar_colours, width=0.6, zorder=3)
+ax3.axhline(y=0, color="#888780", linewidth=0.8, zorder=2)
+ax3.set_xticks(list(x_pos))
+ax3.set_xticklabels(labels, fontsize=10)
+ax3.set_ylabel("25bp moves priced in", fontsize=9, color="#888780")
+ax3.tick_params(axis="y", labelcolor="#888780", labelsize=9)
+ax3.yaxis.set_major_formatter(
+    ticker.FuncFormatter(lambda v, _: f"{'+' if v > 0 else ''}{v:.1f}×")
+)
+ax3.set_title("Hike / cut probability vs latest SONIA", fontsize=11,
+              fontweight="normal", pad=8)
+ax3.grid(axis="y", color="grey", alpha=0.12, linewidth=0.8)
+ax3.set_xlim(-0.5, len(labels) - 0.5)
+
+for bar, prob in zip(bars, probs):
+    txt, _ = prob_label(prob)
+    txt_single = txt.replace("\n", " ")
+    y_off = 0.03 if prob >= 0 else -0.03
+    va    = "bottom" if prob >= 0 else "top"
+    ax3.text(bar.get_x() + bar.get_width() / 2,
+             bar.get_height() + y_off,
+             txt_single,
+             ha="center", va=va, fontsize=7.5, color=bar.get_facecolor(),
+             fontweight="bold")
+
+plt.savefig("sonia_dashboard.png", dpi=150, bbox_inches="tight")
+plt.show()
